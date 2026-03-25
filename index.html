@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wordle Solver — 3b1b Style</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-layer"></div>
+
+    <main class="stage">
+      <section class="board-block">
+        <div class="panel-title">
+          <span class="muted"># Possibilities</span>
+          <span class="slash">/</span>
+          <span class="accent">Uncertainty</span>
+        </div>
+        <div id="board" class="board" aria-label="Wordle board"></div>
+        <div id="mini-bars" class="mini-bars"></div>
+      </section>
+
+      <section class="picks-block">
+        <div class="panel-title panel-title--right">
+          <span>Top picks</span>
+          <span class="accent">E[Info.]</span>
+        </div>
+        <ol id="best-guesses" class="picks"></ol>
+        <div id="progress" class="progress" hidden>
+          <div class="progress__bar"></div>
+          <span class="progress__label">Computing expected score…</span>
+        </div>
+      </section>
+    </main>
+
+    <div class="control-bar">
+      <div class="control-group">
+        <span id="mode-label" class="control-text">Solver</span>
+        <span id="remaining-count" class="control-text">—</span>
+      </div>
+      <div class="input-row">
+        <input
+          id="guess-input"
+          class="guess-input"
+          type="text"
+          maxlength="5"
+          placeholder="Type guess"
+          aria-label="Guess input"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="enter" class="btn">Enter</button>
+        <button id="apply" class="btn btn--accent" disabled>Apply</button>
+      </div>
+      <div class="control-group">
+        <button id="toggle-mode" class="btn btn--ghost">Switch to Play</button>
+        <button id="reset" class="btn">Reset</button>
+        <button id="random-answer" class="btn btn--ghost">New Secret</button>
+        <button id="reveal-answer" class="btn btn--ghost">Reveal</button>
+        <span id="secret-display" class="control-text">Secret: —</span>
+      </div>
+    </div>
+
+    <div class="hint" id="pattern-hint">
+      Solver mode: enter a guess, then click tiles to set colors, then press Apply.
+    </div>
+
+    <div id="keyboard" class="keyboard" aria-label="On-screen keyboard"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
