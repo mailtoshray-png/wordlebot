@@ -589,6 +589,43 @@ function computeSuggestions() {
     return;
   }
 
+  if (state.remainingAnswers.length <= 5) {
+    const candidates = state.remainingAnswers;
+    const candidateCodes = state.remainingCodes;
+    const answers = state.remainingAnswers;
+    const answerCodes = state.remainingCodes;
+    const { weights, H0 } = getCurrentWeightsAndEntropy();
+    state.currentWeights = weights;
+    state.currentEntropy = H0;
+    updateStats();
+    if (progressEl) progressEl.hidden = true;
+
+    const weightMap = new Map();
+    for (let i = 0; i < answers.length; i += 1) {
+      weightMap.set(answers[i], weights[i]);
+    }
+    const guessProbs = candidates.map((word) => weightMap.get(word) || 0);
+    const results = [];
+    const buckets = new Float64Array(PATTERN_COUNT);
+    for (let index = 0; index < candidates.length; index += 1) {
+      buckets.fill(0);
+      const guessCodes = candidateCodes[index];
+      for (let i = 0; i < answerCodes.length; i += 1) {
+        const code = patternCodeFromCodes(guessCodes, answerCodes[i]);
+        buckets[code] += weights[i];
+      }
+      const H1 = entropyFromDistribution(buckets);
+      const gain = H0 - H1;
+      const prob = guessProbs[index] || 0;
+      const expected = prob + (1 - prob) * (1 + entropyToExpectedScore(gain));
+      results.push({ guess: candidates[index], score: expected, gain });
+    }
+    results.sort((a, b) => a.score - b.score);
+    renderBestGuesses(results);
+    renderMiniBars(results.slice(0, 2));
+    return;
+  }
+
   const candidates = state.allowedWords;
   const candidateCodes = state.allowedCodes;
   const answers = state.remainingAnswers;

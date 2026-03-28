@@ -54,7 +54,7 @@ body {
 }
 
 .panel-title {
-  font-size: 1.4rem;
+  font-size: clamp(1.1rem, 3vw, 1.4rem);
   letter-spacing: 0.02em;
 }
 
@@ -78,8 +78,8 @@ body {
 }
 
 .board {
-  --tile-size: 68px;
-  --tile-gap: 8px;
+  --tile-size: clamp(48px, 10.5vw, 68px);
+  --tile-gap: clamp(6px, 1.5vw, 8px);
   display: grid;
   gap: 12px;
 }
@@ -160,7 +160,7 @@ body {
   margin-top: 8px;
   display: grid;
   gap: 8px;
-  width: 220px;
+  width: min(240px, 80vw);
 }
 
 .mini-bar {
@@ -198,7 +198,7 @@ body {
   margin: 0;
   padding: 0;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 1.2rem;
+  font-size: clamp(1rem, 2.6vw, 1.2rem);
   display: grid;
   gap: 8px;
 }
@@ -337,17 +337,62 @@ body {
     justify-items: start;
   }
 
+  .row-left,
+  .row-right {
+    white-space: normal;
+  }
+
+  .row-left {
+    font-size: 1rem;
+  }
+
+  .row-right {
+    font-size: 0.95rem;
+  }
+
   .row-right {
     text-align: left;
   }
 }
 
 @media (max-width: 720px) {
-  .board {
-    --tile-size: 54px;
+  .control-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
   }
 
-  .row-left {
-    font-size: 1rem;
+  .control-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .input-row {
+    width: 100%;
+  }
+
+  .guess-input {
+    flex: 1 1 160px;
+    width: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .stage {
+    width: 92vw;
+  }
+
+  .row-left,
+  .row-right {
+    font-size: 0.9rem;
+  }
+
+  .control-text {
+    font-size: 0.8rem;
+  }
+
+  .btn {
+    font-size: 0.8rem;
+    padding: 6px 10px;
   }
 }
