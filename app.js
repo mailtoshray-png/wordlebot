@@ -39,7 +39,7 @@ const guessInput = document.getElementById("guess-input");
 const enterButton = document.getElementById("enter");
 const applyButton = document.getElementById("apply");
 const resetButton = document.getElementById("reset");
-const toggleModeButton = document.getElementById("toggle-mode");
+const modeSelectEl = document.getElementById("mode-select");
 const remainingCountEl = document.getElementById("remaining-count");
 const bestGuessesEl = document.getElementById("best-guesses");
 const miniBarsEl = document.getElementById("mini-bars");
@@ -165,7 +165,7 @@ function setControlsEnabled(enabled) {
   analyzeButton.disabled = !enabled || state.analysisInProgress;
   if (secretInput) secretInput.disabled = !enabled;
   if (setSecretButton) setSecretButton.disabled = !enabled;
-  toggleModeButton.disabled = !enabled;
+  if (modeSelectEl) modeSelectEl.disabled = !enabled;
   resetButton.disabled = !enabled;
   randomAnswerButton.disabled = !enabled;
   revealAnswerButton.disabled = !enabled;
@@ -1231,20 +1231,8 @@ function formatFlag(value) {
   return Boolean(value);
 }
 
-const MODE_ORDER = ["solver", "play", "custom", "analyzer"];
-
 function updateModeUI() {
-  const index = MODE_ORDER.indexOf(state.mode);
-  const nextMode = MODE_ORDER[(index + 1) % MODE_ORDER.length];
-  const nextLabel =
-    nextMode === "solver"
-      ? "Solver"
-      : nextMode === "play"
-        ? "Play"
-        : nextMode === "custom"
-          ? "Custom"
-          : "Analyzer";
-  toggleModeButton.textContent = `Switch to ${nextLabel}`;
+  if (modeSelectEl) modeSelectEl.value = state.mode;
   if (picksPanelEl) picksPanelEl.hidden = state.mode === "analyzer";
   if (analysisPanelEl) analysisPanelEl.hidden = state.mode !== "analyzer";
   if (analyzeButton) analyzeButton.hidden = state.mode !== "analyzer";
@@ -1271,12 +1259,6 @@ function setMode(mode) {
   }
   updateModeUI();
   resetGame();
-}
-
-function toggleMode() {
-  const index = MODE_ORDER.indexOf(state.mode);
-  const nextMode = MODE_ORDER[(index + 1) % MODE_ORDER.length];
-  setMode(nextMode);
 }
 
 async function loadLocalWordList(url) {
@@ -1352,8 +1334,12 @@ enterButton.addEventListener("click", handleEnter);
 applyButton.addEventListener("click", handleApply);
 analyzeButton.addEventListener("click", analyzeGame);
 resetButton.addEventListener("click", resetGame);
-toggleModeButton.addEventListener("click", toggleMode);
 setSecretButton.addEventListener("click", handleSetSecret);
+if (modeSelectEl) {
+  modeSelectEl.addEventListener("change", (event) => {
+    setMode(event.target.value);
+  });
+}
 randomAnswerButton.addEventListener("click", () => {
   setSecret();
   if (state.mode === "play") {

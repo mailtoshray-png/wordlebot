@@ -72,7 +72,13 @@
         <button id="set-secret" class="btn btn--accent">Set Secret</button>
       </div>
       <div class="control-group">
-        <button id="toggle-mode" class="btn btn--ghost">Switch to Play</button>
+        <label class="control-text" for="mode-select">Mode</label>
+        <select id="mode-select" class="mode-select" aria-label="Mode select">
+          <option value="solver">Solver</option>
+          <option value="play">Play</option>
+          <option value="custom">Custom</option>
+          <option value="analyzer">Analyzer</option>
+        </select>
         <button id="reset" class="btn">Reset</button>
         <button id="random-answer" class="btn btn--ghost">New Secret</button>
         <button id="reveal-answer" class="btn btn--ghost">Reveal</button>

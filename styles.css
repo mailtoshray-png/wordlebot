@@ -405,6 +405,17 @@ body {
   width: 140px;
 }
 
+.mode-select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #3a3a3a;
+  background: #0f0f0f;
+  color: var(--ink);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .btn {
   border: 1px solid #3a3a3a;
   background: #1a1a1a;
