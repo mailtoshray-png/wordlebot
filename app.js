@@ -30,7 +30,8 @@ const state = {
   currentEntropy: null,
   stepStats: Array(MAX_GUESSES).fill(null),
   listsReady: false,
-  analysisInProgress: false
+  analysisInProgress: false,
+  customSecretSet: false
 };
 
 const boardEl = document.getElementById("board");
@@ -53,11 +54,11 @@ const progressBarEl = progressEl.querySelector(".progress__bar");
 const progressLabelEl = progressEl.querySelector(".progress__label");
 const picksPanelEl = document.getElementById("picks-panel");
 const analysisPanelEl = document.getElementById("analysis-panel");
-const analysisSkillEl = document.getElementById("analysis-skill");
-const analysisLuckEl = document.getElementById("analysis-luck");
-const analysisStepsEl = document.getElementById("analysis-steps");
-const analysisTurnsEl = document.getElementById("analysis-turns");
+const analysisCardsEl = document.getElementById("analysis-cards");
 const analyzeButton = document.getElementById("analyze");
+const customControlsEl = document.getElementById("custom-controls");
+const secretInput = document.getElementById("secret-input");
+const setSecretButton = document.getElementById("set-secret");
 
 function sanitizeGuess(value) {
   return value.toLowerCase().replace(/[^a-z]/g, "").slice(0, WORD_LENGTH);
@@ -131,7 +132,30 @@ function getModeHint() {
   if (state.mode === "analyzer") {
     return "Analyzer mode: enter your guesses, set colors, press Apply, then Analyze.";
   }
+  if (state.mode === "custom") {
+    return "Custom mode: set a secret word, pass the device, then start guessing.";
+  }
   return "Solver mode: enter a guess, then click tiles to set colors, then press Apply.";
+}
+
+function formatMetric(value) {
+  if (!Number.isFinite(value)) return "—";
+  return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function guessQualityPercent(bestScore, guessScore) {
+  if (!Number.isFinite(bestScore) || !Number.isFinite(guessScore) || guessScore <= 0) return null;
+  return Math.max(0, Math.min(100, (bestScore / guessScore) * 100));
+}
+
+function luckText(score) {
+  if (!Number.isFinite(score)) return "—";
+  if (score >= 90) return "Literally incredible";
+  if (score >= 75) return "Very lucky";
+  if (score >= 60) return "Lucky";
+  if (score >= 40) return "Average";
+  if (score >= 25) return "Unlucky";
+  return "Very unlucky";
 }
 
 function setControlsEnabled(enabled) {
@@ -139,6 +163,8 @@ function setControlsEnabled(enabled) {
   enterButton.disabled = !enabled;
   applyButton.disabled = !enabled || state.pendingRow === null;
   analyzeButton.disabled = !enabled || state.analysisInProgress;
+  if (secretInput) secretInput.disabled = !enabled;
+  if (setSecretButton) setSecretButton.disabled = !enabled;
   toggleModeButton.disabled = !enabled;
   resetButton.disabled = !enabled;
   randomAnswerButton.disabled = !enabled;
@@ -357,10 +383,7 @@ function clearAllRowStats() {
 }
 
 function clearAnalysis() {
-  if (analysisSkillEl) analysisSkillEl.textContent = "—";
-  if (analysisLuckEl) analysisLuckEl.textContent = "—";
-  if (analysisStepsEl) analysisStepsEl.textContent = "—";
-  if (analysisTurnsEl) analysisTurnsEl.innerHTML = "";
+  if (analysisCardsEl) analysisCardsEl.innerHTML = "";
 }
 
 function patternToCode(pattern) {
@@ -420,7 +443,13 @@ function updateStats(bestScore = null) {
   }
   if (modeLabelEl) {
     modeLabelEl.textContent =
-      state.mode === "solver" ? "Solver" : state.mode === "play" ? "Play" : "Analyzer";
+      state.mode === "solver"
+        ? "Solver"
+        : state.mode === "play"
+          ? "Play"
+          : state.mode === "custom"
+            ? "Custom"
+            : "Analyzer";
   }
 }
 
@@ -456,6 +485,11 @@ function setSecret(word = null) {
   }
   const selection = word || state.answerWords[Math.floor(Math.random() * state.answerWords.length)];
   state.secret = selection;
+  if (secretDisplayEl) secretDisplayEl.textContent = "Secret: —";
+}
+
+function clearSecret() {
+  state.secret = "";
   if (secretDisplayEl) secretDisplayEl.textContent = "Secret: —";
 }
 
@@ -495,6 +529,15 @@ function resetGame() {
   clearBoard();
   if (state.mode === "play") {
     setSecret();
+  } else if (state.mode === "custom") {
+    if (!state.customSecretSet) {
+      clearSecret();
+      patternHintEl.textContent = "Custom mode: set a secret word first.";
+      guessInput.disabled = true;
+      enterButton.disabled = true;
+    } else {
+      patternHintEl.textContent = "Custom mode: start guessing.";
+    }
   }
   updateStats();
   if (state.listsReady && state.mode !== "analyzer") {
@@ -513,10 +556,14 @@ function handleEnter() {
     patternHintEl.textContent = "Guess not in allowed list.";
     return;
   }
+  if (state.mode === "custom" && !state.customSecretSet) {
+    patternHintEl.textContent = "Set a secret word first.";
+    return;
+  }
 
   updateRowLetters(state.currentRow, guess);
 
-  if (state.mode === "play") {
+  if (state.mode === "play" || state.mode === "custom") {
     const guessIndex = state.allowedIndex.get(guess);
     const guessCodes = Number.isInteger(guessIndex)
       ? state.allowedCodes[guessIndex]
@@ -723,13 +770,15 @@ function computeSuggestions() {
   requestAnimationFrame(step);
 }
 
-function buildPatternCounts(guessCodes, answerCodes) {
+function buildPatternStats(guessCodes, answerCodes, weights) {
   const counts = new Uint16Array(PATTERN_COUNT);
+  const weightSums = new Float64Array(PATTERN_COUNT);
   for (let i = 0; i < answerCodes.length; i += 1) {
     const code = patternCodeFromCodes(guessCodes, answerCodes[i]);
     counts[code] += 1;
+    weightSums[code] += weights[i] || 0;
   }
-  return counts;
+  return { counts, weightSums };
 }
 
 function expectedRemainingFromCounts(counts, total) {
@@ -740,6 +789,16 @@ function expectedRemainingFromCounts(counts, total) {
     if (value) sum += value * value;
   }
   return sum / total;
+}
+
+function expectedRemainingFromWeights(weightSums, total) {
+  if (!total) return 0;
+  let sum = 0;
+  for (let i = 0; i < weightSums.length; i += 1) {
+    const value = weightSums[i];
+    if (value) sum += value * value;
+  }
+  return total * sum;
 }
 
 function computeSkillScore(bestScore, guessScore) {
@@ -829,11 +888,9 @@ async function analyzeGame() {
     patternHintEl.textContent = "Add your guesses first.";
     return;
   }
-  const completed =
-    state.guesses.some((entry) => isSolvedPattern(entry.pattern)) ||
-    state.guesses.length >= MAX_GUESSES;
-  if (!completed) {
-    patternHintEl.textContent = "Analyzer works after a completed game.";
+  const solvedIndex = state.guesses.findIndex((entry) => isSolvedPattern(entry.pattern));
+  if (solvedIndex === -1) {
+    patternHintEl.textContent = "Analyzer works after a solved game.";
     return;
   }
 
@@ -847,14 +904,17 @@ async function analyzeGame() {
     if (progressLabelEl) progressLabelEl.textContent = "Analyzing turns…";
   }
 
+  const actualAnswer = state.guesses[solvedIndex].guess;
+  const actualIndex = state.answerIndex.get(actualAnswer);
+  const actualAnswerCodes = Number.isInteger(actualIndex)
+    ? state.answerCodes[actualIndex]
+    : wordToCodes(actualAnswer);
+
   let remainingAnswers = [...state.answerWords];
   let remainingCodes = state.answerCodes.slice();
   const turns = [];
-  let skillSum = 0;
-  let skillCount = 0;
-  let luckSum = 0;
 
-  for (let i = 0; i < state.guesses.length; i += 1) {
+  for (let i = 0; i <= solvedIndex; i += 1) {
     const entry = state.guesses[i];
     if (!remainingAnswers.length) break;
 
@@ -883,25 +943,58 @@ async function analyzeGame() {
     const guessCodes = Number.isInteger(guessIndex)
       ? state.allowedCodes[guessIndex]
       : wordToCodes(entry.guess);
-    const counts = buildPatternCounts(guessCodes, remainingCodes);
+    const { counts, weightSums } = buildPatternStats(guessCodes, remainingCodes, weights);
     const total = remainingAnswers.length;
     const patternCode = patternToCode(entry.pattern);
     const actualRemaining = counts[patternCode] || 0;
     const expectedRemaining = expectedRemainingFromCounts(counts, total);
-    const turnLuck = computeLuckScore(expectedRemaining, actualRemaining);
-    const turnSkill = computeSkillScore(result.bestScore, result.targetScore);
+    const expectedLikely = expectedRemainingFromWeights(weightSums, total);
+    const actualLikely = total * (weightSums[patternCode] || 0);
+    const turnLuckScore = computeLuckScore(expectedRemaining, actualRemaining);
+    const turnQuality = guessQualityPercent(result.bestScore, result.targetScore);
 
-    if (turnLuck !== null) luckSum += turnLuck;
-    if (turnSkill !== null) {
-      skillSum += turnSkill;
-      skillCount += 1;
+    const aiGuess = result.bestGuess || "—";
+    let aiExpectedRemaining = null;
+    let aiExpectedLikely = null;
+    let aiActualRemaining = null;
+    let aiActualLikely = null;
+    let aiPattern = null;
+    if (result.bestGuess) {
+      const aiIndex = state.allowedIndex.get(result.bestGuess);
+      const aiCodes = Number.isInteger(aiIndex)
+        ? state.allowedCodes[aiIndex]
+        : wordToCodes(result.bestGuess);
+      aiPattern = codeToPattern(patternCodeFromCodes(aiCodes, actualAnswerCodes));
+      const aiStats = buildPatternStats(aiCodes, remainingCodes, weights);
+      aiExpectedRemaining = expectedRemainingFromCounts(aiStats.counts, total);
+      aiExpectedLikely = expectedRemainingFromWeights(aiStats.weightSums, total);
+      const aiPatternCode = patternToCode(aiPattern);
+      aiActualRemaining = aiStats.counts[aiPatternCode] || 0;
+      aiActualLikely = total * (aiStats.weightSums[aiPatternCode] || 0);
     }
 
     turns.push({
       guess: entry.guess,
-      bestGuess: result.bestGuess || "—",
-      luck: turnLuck,
-      skill: turnSkill
+      pattern: entry.pattern,
+      expectedRemaining,
+      expectedLikely,
+      actualRemaining,
+      actualLikely,
+      quality: turnQuality,
+      luckScore: turnLuckScore,
+      likelyWord: state.answerIndex.has(entry.guess),
+      aiGuess,
+      aiPattern,
+      aiExpectedRemaining,
+      aiExpectedLikely,
+      aiActualRemaining,
+      aiActualLikely,
+      aiQuality: result.bestScore ? 100 : null,
+      aiLuckScore:
+        aiExpectedRemaining !== null && aiActualRemaining !== null
+          ? computeLuckScore(aiExpectedRemaining, aiActualRemaining)
+          : null,
+      aiLikelyWord: result.bestGuess ? state.answerIndex.has(result.bestGuess) : false
     });
 
     const nextAnswers = [];
@@ -919,15 +1012,7 @@ async function analyzeGame() {
 
     if (isSolvedPattern(entry.pattern)) break;
   }
-
-  const overallSkill = skillCount ? Math.round(skillSum / skillCount) : null;
-  const overallLuck = turns.length ? Math.round(luckSum / turns.length) : null;
-  renderAnalysis({
-    skill: overallSkill,
-    luck: overallLuck,
-    steps: turns.length,
-    turns
-  });
+  renderAnalysis(turns);
 
   if (progressEl) {
     progressEl.hidden = true;
@@ -937,6 +1022,28 @@ async function analyzeGame() {
 
   state.analysisInProgress = false;
   analyzeButton.disabled = false;
+}
+
+function handleSetSecret() {
+  if (state.mode !== "custom") return;
+  if (!state.listsReady) return;
+  const word = sanitizeGuess(secretInput.value);
+  if (word.length !== WORD_LENGTH) {
+    patternHintEl.textContent = "Secret must be 5 letters.";
+    return;
+  }
+  if (!state.answerIndex.has(word)) {
+    patternHintEl.textContent = "Secret must be in the official answer list.";
+    return;
+  }
+  state.customSecretSet = true;
+  setSecret(word);
+  secretInput.value = "";
+  secretInput.placeholder = "Secret set";
+  patternHintEl.textContent = "Secret set. Pass the device and start guessing.";
+  guessInput.disabled = false;
+  enterButton.disabled = false;
+  resetGame();
 }
 
 function renderBestGuesses(list) {
@@ -975,67 +1082,193 @@ function renderMiniBars(list) {
   });
 }
 
-function renderAnalysis({ skill, luck, steps, turns }) {
-  if (analysisSkillEl) {
-    analysisSkillEl.textContent = skill === null ? "—" : `${skill}`;
-  }
-  if (analysisLuckEl) {
-    analysisLuckEl.textContent = luck === null ? "—" : `${luck}`;
-  }
-  if (analysisStepsEl) {
-    analysisStepsEl.textContent = steps ? `${steps}` : "—";
-  }
-  if (!analysisTurnsEl) return;
-  analysisTurnsEl.innerHTML = "";
-  turns.forEach((turn, index) => {
-    const li = document.createElement("li");
-    li.className = "analysis-item";
+function renderAnalysis(turns) {
+  if (!analysisCardsEl) return;
+  analysisCardsEl.innerHTML = "";
+  turns.forEach((turn) => {
+    const card = document.createElement("div");
+    card.className = "analysis-card";
 
-    const guessWrap = document.createElement("div");
-    const guessWord = document.createElement("strong");
-    guessWord.textContent = `${index + 1}. ${turn.guess.toLowerCase()}`;
-    const guessMeta = document.createElement("span");
-    guessMeta.className = "analysis-sub";
-    guessMeta.textContent = turn.skill === null ? "Skill —" : `Skill ${turn.skill}`;
-    guessWrap.appendChild(guessWord);
-    guessWrap.appendChild(guessMeta);
+    const header = document.createElement("div");
+    header.className = "analysis-card__header";
+    const playedTitle = document.createElement("div");
+    playedTitle.textContent = "Played";
+    const aiTitle = document.createElement("div");
+    aiTitle.textContent = "AI would have played";
+    header.appendChild(playedTitle);
+    header.appendChild(aiTitle);
 
-    const botWrap = document.createElement("div");
-    const botWord = document.createElement("strong");
-    botWord.textContent = `Bot: ${turn.bestGuess.toLowerCase()}`;
-    const botMeta = document.createElement("span");
-    botMeta.className = "analysis-sub";
-    botMeta.textContent = "Best pick";
-    botWrap.appendChild(botWord);
-    botWrap.appendChild(botMeta);
+    const guesses = document.createElement("div");
+    guesses.className = "analysis-card__guesses";
+    guesses.appendChild(buildAnalysisTiles(turn.guess, turn.pattern));
+    guesses.appendChild(buildAnalysisTiles(turn.aiGuess, turn.aiPattern));
 
-    const luckEl = document.createElement("div");
-    luckEl.className = "analysis-luck";
-    luckEl.textContent = turn.luck === null ? "—" : `${turn.luck}`;
+    const rows = document.createElement("div");
+    rows.className = "analysis-rows";
+    rows.appendChild(
+      buildAnalysisRow(
+        "Average remaining words",
+        formatRemaining(turn.expectedRemaining, turn.expectedLikely),
+        formatRemaining(turn.aiExpectedRemaining, turn.aiExpectedLikely)
+      )
+    );
+    rows.appendChild(
+      buildAnalysisRow(
+        "Guess quality",
+        formatQuality(turn.quality),
+        formatQuality(turn.aiQuality),
+        "analysis-value--accent"
+      )
+    );
+    rows.appendChild(
+      buildAnalysisRow(
+        "Actual remaining words",
+        formatActualRemaining(turn.actualRemaining, turn.actualLikely, turn.pattern),
+        formatRemaining(turn.aiActualRemaining, turn.aiActualLikely),
+        null,
+        turn.pattern
+      )
+    );
+    rows.appendChild(
+      buildAnalysisRow(
+        "Luck rating",
+        luckText(turn.luckScore),
+        luckText(turn.aiLuckScore)
+      )
+    );
+    rows.appendChild(
+      buildAnalysisRow(
+        "Likely word?",
+        formatFlag(turn.likelyWord),
+        formatFlag(turn.aiLikelyWord),
+        null,
+        null,
+        true
+      )
+    );
 
-    li.appendChild(guessWrap);
-    li.appendChild(botWrap);
-    li.appendChild(luckEl);
-    analysisTurnsEl.appendChild(li);
+    card.appendChild(header);
+    card.appendChild(guesses);
+    card.appendChild(rows);
+    analysisCardsEl.appendChild(card);
   });
 }
 
-const MODE_ORDER = ["solver", "play", "analyzer"];
+function buildAnalysisTiles(word, pattern) {
+  const wrap = document.createElement("div");
+  wrap.className = "analysis-tiles";
+  const letters = (word || "").padEnd(WORD_LENGTH).slice(0, WORD_LENGTH);
+  const states = pattern || Array(WORD_LENGTH).fill(0);
+  for (let i = 0; i < WORD_LENGTH; i += 1) {
+    const tile = document.createElement("div");
+    tile.className = "analysis-tile";
+    const state = states[i] ?? 0;
+    if (state === 2) tile.classList.add("analysis-tile--green");
+    else if (state === 1) tile.classList.add("analysis-tile--yellow");
+    else tile.classList.add("analysis-tile--gray");
+    tile.textContent = letters[i] === " " ? "" : letters[i];
+    wrap.appendChild(tile);
+  }
+  return wrap;
+}
+
+function buildAnalysisRow(label, playedValue, aiValue, valueClass = null, pattern = null, isFlag = false) {
+  const row = document.createElement("div");
+  row.className = "analysis-row";
+  const labelEl = document.createElement("div");
+  labelEl.className = "analysis-label";
+  labelEl.textContent = label;
+
+  const playedEl = document.createElement("div");
+  playedEl.className = "analysis-value";
+  if (valueClass) playedEl.classList.add(valueClass);
+  if (pattern && isSolvedPattern(pattern) && label === "Actual remaining words") {
+    playedEl.className = "analysis-value analysis-value--success";
+  }
+  if (isFlag) {
+    playedEl.className = `analysis-flag ${playedValue ? "analysis-flag--good" : "analysis-flag--bad"}`;
+    playedEl.textContent = playedValue ? "✓" : "✕";
+  } else {
+    playedEl.textContent = playedValue ?? "—";
+  }
+
+  const aiEl = document.createElement("div");
+  aiEl.className = "analysis-value";
+  if (valueClass) aiEl.classList.add(valueClass);
+  if (isFlag) {
+    aiEl.className = `analysis-flag ${aiValue ? "analysis-flag--good" : "analysis-flag--bad"}`;
+    aiEl.textContent = aiValue ? "✓" : "✕";
+  } else {
+    aiEl.textContent = aiValue ?? "—";
+  }
+
+  row.appendChild(labelEl);
+  row.appendChild(playedEl);
+  row.appendChild(aiEl);
+  return row;
+}
+
+function formatRemaining(count, likely) {
+  if (!Number.isFinite(count)) return "—";
+  const countText = `${formatMetric(count)} words`;
+  if (!Number.isFinite(likely)) return countText;
+  return `${countText}, ${formatMetric(likely)} likely`;
+}
+
+function formatActualRemaining(count, likely, pattern) {
+  if (pattern && isSolvedPattern(pattern)) {
+    return "Correct!";
+  }
+  return formatRemaining(count, likely);
+}
+
+function formatQuality(value) {
+  if (!Number.isFinite(value)) return "—";
+  return `${value.toFixed(2)}%`;
+}
+
+function formatFlag(value) {
+  return Boolean(value);
+}
+
+const MODE_ORDER = ["solver", "play", "custom", "analyzer"];
 
 function updateModeUI() {
   const index = MODE_ORDER.indexOf(state.mode);
   const nextMode = MODE_ORDER[(index + 1) % MODE_ORDER.length];
   const nextLabel =
-    nextMode === "solver" ? "Solver" : nextMode === "play" ? "Play" : "Analyzer";
+    nextMode === "solver"
+      ? "Solver"
+      : nextMode === "play"
+        ? "Play"
+        : nextMode === "custom"
+          ? "Custom"
+          : "Analyzer";
   toggleModeButton.textContent = `Switch to ${nextLabel}`;
   if (picksPanelEl) picksPanelEl.hidden = state.mode === "analyzer";
   if (analysisPanelEl) analysisPanelEl.hidden = state.mode !== "analyzer";
   if (analyzeButton) analyzeButton.hidden = state.mode !== "analyzer";
+  if (customControlsEl) customControlsEl.hidden = state.mode !== "custom";
+  if (randomAnswerButton) randomAnswerButton.hidden = state.mode === "custom";
   patternHintEl.textContent = getModeHint();
+  if (state.mode === "custom") {
+    if (!state.customSecretSet) {
+      if (secretInput) {
+        secretInput.value = "";
+        secretInput.placeholder = "Set secret";
+      }
+      guessInput.disabled = true;
+      enterButton.disabled = true;
+    }
+  }
 }
 
 function setMode(mode) {
   state.mode = mode;
+  if (mode !== "custom") {
+    state.customSecretSet = false;
+    if (secretInput) secretInput.value = "";
+  }
   updateModeUI();
   resetGame();
 }
@@ -1120,6 +1353,7 @@ applyButton.addEventListener("click", handleApply);
 analyzeButton.addEventListener("click", analyzeGame);
 resetButton.addEventListener("click", resetGame);
 toggleModeButton.addEventListener("click", toggleMode);
+setSecretButton.addEventListener("click", handleSetSecret);
 randomAnswerButton.addEventListener("click", () => {
   setSecret();
   if (state.mode === "play") {
@@ -1152,6 +1386,10 @@ guessInput.addEventListener("input", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && document.activeElement === secretInput) {
+    handleSetSecret();
+    return;
+  }
   if (event.key === "Enter") {
     handleEnter();
   } else if (event.key === "Backspace") {

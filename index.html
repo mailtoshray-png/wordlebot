@@ -33,30 +33,7 @@
           </div>
         </div>
         <div id="analysis-panel" class="analysis" hidden>
-          <div class="panel-title panel-title--right">
-            <span>Analysis</span>
-            <span class="accent">Skill / Luck</span>
-          </div>
-          <div class="analysis-summary">
-            <div>
-              <span class="analysis-label">Skill</span>
-              <span id="analysis-skill" class="analysis-value">—</span>
-            </div>
-            <div>
-              <span class="analysis-label">Luck</span>
-              <span id="analysis-luck" class="analysis-value">—</span>
-            </div>
-            <div>
-              <span class="analysis-label">Steps</span>
-              <span id="analysis-steps" class="analysis-value">—</span>
-            </div>
-          </div>
-          <div class="analysis-head">
-            <span>Guess</span>
-            <span>Bot pick</span>
-            <span>Luck</span>
-          </div>
-          <ol id="analysis-turns" class="analysis-list"></ol>
+          <div id="analysis-cards" class="analysis-cards"></div>
         </div>
       </section>
     </main>
@@ -80,6 +57,19 @@
         <button id="enter" class="btn">Enter</button>
         <button id="apply" class="btn btn--accent" disabled>Apply</button>
         <button id="analyze" class="btn btn--accent" hidden>Analyze</button>
+      </div>
+      <div id="custom-controls" class="input-row" hidden>
+        <input
+          id="secret-input"
+          class="guess-input guess-input--secret"
+          type="text"
+          maxlength="5"
+          placeholder="Set secret"
+          aria-label="Secret word input"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="set-secret" class="btn btn--accent">Set Secret</button>
       </div>
       <div class="control-group">
         <button id="toggle-mode" class="btn btn--ghost">Switch to Play</button>
