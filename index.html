@@ -20,15 +20,43 @@
         <div id="mini-bars" class="mini-bars"></div>
       </section>
 
-      <section class="picks-block">
-        <div class="panel-title panel-title--right">
-          <span>Top picks</span>
-          <span class="accent">E[Info.]</span>
+      <section class="picks-block" id="picks-block">
+        <div id="picks-panel">
+          <div class="panel-title panel-title--right">
+            <span>Top picks</span>
+            <span class="accent">E[Info.]</span>
+          </div>
+          <ol id="best-guesses" class="picks"></ol>
+          <div id="progress" class="progress" hidden>
+            <div class="progress__bar"></div>
+            <span class="progress__label">Computing expected score…</span>
+          </div>
         </div>
-        <ol id="best-guesses" class="picks"></ol>
-        <div id="progress" class="progress" hidden>
-          <div class="progress__bar"></div>
-          <span class="progress__label">Computing expected score…</span>
+        <div id="analysis-panel" class="analysis" hidden>
+          <div class="panel-title panel-title--right">
+            <span>Analysis</span>
+            <span class="accent">Skill / Luck</span>
+          </div>
+          <div class="analysis-summary">
+            <div>
+              <span class="analysis-label">Skill</span>
+              <span id="analysis-skill" class="analysis-value">—</span>
+            </div>
+            <div>
+              <span class="analysis-label">Luck</span>
+              <span id="analysis-luck" class="analysis-value">—</span>
+            </div>
+            <div>
+              <span class="analysis-label">Steps</span>
+              <span id="analysis-steps" class="analysis-value">—</span>
+            </div>
+          </div>
+          <div class="analysis-head">
+            <span>Guess</span>
+            <span>Bot pick</span>
+            <span>Luck</span>
+          </div>
+          <ol id="analysis-turns" class="analysis-list"></ol>
         </div>
       </section>
     </main>
@@ -51,6 +79,7 @@
         />
         <button id="enter" class="btn">Enter</button>
         <button id="apply" class="btn btn--accent" disabled>Apply</button>
+        <button id="analyze" class="btn btn--accent" hidden>Analyze</button>
       </div>
       <div class="control-group">
         <button id="toggle-mode" class="btn btn--ghost">Switch to Play</button>

@@ -29,7 +29,8 @@ const state = {
   currentWeights: null,
   currentEntropy: null,
   stepStats: Array(MAX_GUESSES).fill(null),
-  listsReady: false
+  listsReady: false,
+  analysisInProgress: false
 };
 
 const boardEl = document.getElementById("board");
@@ -49,6 +50,14 @@ const revealAnswerButton = document.getElementById("reveal-answer");
 const secretDisplayEl = document.getElementById("secret-display");
 const progressEl = document.getElementById("progress");
 const progressBarEl = progressEl.querySelector(".progress__bar");
+const progressLabelEl = progressEl.querySelector(".progress__label");
+const picksPanelEl = document.getElementById("picks-panel");
+const analysisPanelEl = document.getElementById("analysis-panel");
+const analysisSkillEl = document.getElementById("analysis-skill");
+const analysisLuckEl = document.getElementById("analysis-luck");
+const analysisStepsEl = document.getElementById("analysis-steps");
+const analysisTurnsEl = document.getElementById("analysis-turns");
+const analyzeButton = document.getElementById("analyze");
 
 function sanitizeGuess(value) {
   return value.toLowerCase().replace(/[^a-z]/g, "").slice(0, WORD_LENGTH);
@@ -95,6 +104,7 @@ function getWeights(words, priors) {
   return weights;
 }
 
+
 function entropyFromDistribution(dist) {
   let entropy = 0;
   for (let i = 0; i < dist.length; i += 1) {
@@ -114,10 +124,21 @@ function formatBits(value) {
   return Number.isFinite(value) ? value.toFixed(2) : "—";
 }
 
+function getModeHint() {
+  if (state.mode === "play") {
+    return "Play mode: enter guesses to solve the hidden word.";
+  }
+  if (state.mode === "analyzer") {
+    return "Analyzer mode: enter your guesses, set colors, press Apply, then Analyze.";
+  }
+  return "Solver mode: enter a guess, then click tiles to set colors, then press Apply.";
+}
+
 function setControlsEnabled(enabled) {
   guessInput.disabled = !enabled;
   enterButton.disabled = !enabled;
   applyButton.disabled = !enabled || state.pendingRow === null;
+  analyzeButton.disabled = !enabled || state.analysisInProgress;
   toggleModeButton.disabled = !enabled;
   resetButton.disabled = !enabled;
   randomAnswerButton.disabled = !enabled;
@@ -150,6 +171,7 @@ function getActiveWeightsAndEntropy() {
   }
   return getCurrentWeightsAndEntropy();
 }
+
 
 function entropyToExpectedScore(entropy) {
   const twoToMinus = 2 ** -entropy;
@@ -334,6 +356,13 @@ function clearAllRowStats() {
   }
 }
 
+function clearAnalysis() {
+  if (analysisSkillEl) analysisSkillEl.textContent = "—";
+  if (analysisLuckEl) analysisLuckEl.textContent = "—";
+  if (analysisStepsEl) analysisStepsEl.textContent = "—";
+  if (analysisTurnsEl) analysisTurnsEl.innerHTML = "";
+}
+
 function patternToCode(pattern) {
   let code = 0;
   let factor = 1;
@@ -390,7 +419,8 @@ function updateStats(bestScore = null) {
     remainingCountEl.textContent = `${formatNumber(state.remainingAnswers.length)} Pos`;
   }
   if (modeLabelEl) {
-    modeLabelEl.textContent = state.mode === "solver" ? "Solver" : "Play";
+    modeLabelEl.textContent =
+      state.mode === "solver" ? "Solver" : state.mode === "play" ? "Play" : "Analyzer";
   }
 }
 
@@ -444,18 +474,17 @@ function clearBoard() {
   state.guesses = [];
   state.keyStates = {};
   state.stepStats = Array(MAX_GUESSES).fill(null);
+  state.analysisInProgress = false;
   applyKeyboardStyles();
   updateRowLetters(0, "");
   clearAllRowStats();
+  clearAnalysis();
   if (miniBarsEl) miniBarsEl.innerHTML = "";
   guessInput.value = "";
   guessInput.disabled = false;
   enterButton.disabled = false;
   applyButton.disabled = true;
-  patternHintEl.textContent =
-    state.mode === "solver"
-      ? "Solver mode: enter a guess, then click tiles to set colors, then press Apply."
-      : "Play mode: enter guesses to solve the hidden word.";
+  patternHintEl.textContent = getModeHint();
 }
 
 function resetGame() {
@@ -468,8 +497,11 @@ function resetGame() {
     setSecret();
   }
   updateStats();
-  if (state.listsReady) {
+  if (state.listsReady && state.mode !== "analyzer") {
     computeSuggestions();
+  } else {
+    bestGuessesEl.innerHTML = "";
+    if (miniBarsEl) miniBarsEl.innerHTML = "";
   }
 }
 
@@ -555,14 +587,20 @@ function handleApply() {
   applyButton.disabled = true;
   guessInput.disabled = false;
   enterButton.disabled = false;
-  patternHintEl.textContent = "Solver mode: enter a guess, then click tiles to set colors, then press Apply.";
+  patternHintEl.textContent = getModeHint();
   guessInput.value = "";
   updateRowLetters(state.currentRow, "");
+  if (state.mode === "analyzer") {
+    if (isSolvedPattern(pattern) || state.currentRow >= MAX_GUESSES) {
+      patternHintEl.textContent = "Analyzer ready — press Analyze.";
+    }
+    return;
+  }
   computeSuggestions();
 }
 
 function handleTileClick(event) {
-  if (state.mode !== "solver" || state.pendingRow === null) return;
+  if (state.mode === "play" || state.pendingRow === null) return;
   const tile = event.target.closest(".tile");
   if (!tile) return;
   const row = tile.closest(".row");
@@ -578,6 +616,11 @@ function handleTileClick(event) {
 }
 
 function computeSuggestions() {
+  if (state.mode === "analyzer") {
+    bestGuessesEl.innerHTML = "";
+    if (miniBarsEl) miniBarsEl.innerHTML = "";
+    return;
+  }
   if (!state.listsReady) {
     bestGuessesEl.innerHTML = "";
     if (miniBarsEl) miniBarsEl.innerHTML = "";
@@ -680,6 +723,222 @@ function computeSuggestions() {
   requestAnimationFrame(step);
 }
 
+function buildPatternCounts(guessCodes, answerCodes) {
+  const counts = new Uint16Array(PATTERN_COUNT);
+  for (let i = 0; i < answerCodes.length; i += 1) {
+    const code = patternCodeFromCodes(guessCodes, answerCodes[i]);
+    counts[code] += 1;
+  }
+  return counts;
+}
+
+function expectedRemainingFromCounts(counts, total) {
+  if (!total) return 0;
+  let sum = 0;
+  for (let i = 0; i < counts.length; i += 1) {
+    const value = counts[i];
+    if (value) sum += value * value;
+  }
+  return sum / total;
+}
+
+function computeSkillScore(bestScore, guessScore) {
+  if (!Number.isFinite(bestScore) || !Number.isFinite(guessScore) || guessScore <= 0) {
+    return null;
+  }
+  const ratio = Math.min(1, bestScore / guessScore);
+  return Math.round(ratio * 99);
+}
+
+function computeLuckScore(expectedRemaining, actualRemaining) {
+  if (!Number.isFinite(expectedRemaining) || expectedRemaining <= 0) {
+    return null;
+  }
+  const delta = (expectedRemaining - actualRemaining) / expectedRemaining;
+  const normalized = Math.max(0, Math.min(1, 0.5 + 0.5 * delta));
+  return Math.round(normalized * 99);
+}
+
+function isSolvedPattern(pattern) {
+  return pattern.every((value) => value === 2);
+}
+
+function scoreCandidatesAsync({
+  candidates,
+  candidateCodes,
+  answerCodes,
+  weights,
+  H0,
+  weightMap,
+  targetGuess
+}) {
+  return new Promise((resolve) => {
+    const buckets = new Float64Array(PATTERN_COUNT);
+    let index = 0;
+    let bestScore = Infinity;
+    let bestGuess = "";
+    let bestGain = 0;
+    let targetScore = null;
+    let targetGain = null;
+
+    function step() {
+      const start = performance.now();
+      while (index < candidates.length && performance.now() - start < 16) {
+        buckets.fill(0);
+        const guess = candidates[index];
+        const guessCodes = candidateCodes[index];
+        for (let i = 0; i < answerCodes.length; i += 1) {
+          const code = patternCodeFromCodes(guessCodes, answerCodes[i]);
+          buckets[code] += weights[i];
+        }
+        const H1 = entropyFromDistribution(buckets);
+        const gain = H0 - H1;
+        const prob = weightMap?.get(guess) ?? 0;
+        const expected = prob + (1 - prob) * (1 + entropyToExpectedScore(gain));
+        if (expected < bestScore) {
+          bestScore = expected;
+          bestGuess = guess;
+          bestGain = gain;
+        }
+        if (guess === targetGuess) {
+          targetScore = expected;
+          targetGain = gain;
+        }
+        index += 1;
+      }
+      const pct = candidates.length ? (index / candidates.length) * 100 : 100;
+      if (progressBarEl) progressBarEl.style.width = `${pct.toFixed(1)}%`;
+      if (index < candidates.length) {
+        requestAnimationFrame(step);
+      } else {
+        resolve({ bestGuess, bestScore, bestGain, targetScore, targetGain });
+      }
+    }
+
+    requestAnimationFrame(step);
+  });
+}
+
+async function analyzeGame() {
+  if (!state.listsReady || state.analysisInProgress) return;
+  if (state.pendingRow !== null) {
+    patternHintEl.textContent = "Finish the current row and press Apply first.";
+    return;
+  }
+  if (!state.guesses.length) {
+    patternHintEl.textContent = "Add your guesses first.";
+    return;
+  }
+  const completed =
+    state.guesses.some((entry) => isSolvedPattern(entry.pattern)) ||
+    state.guesses.length >= MAX_GUESSES;
+  if (!completed) {
+    patternHintEl.textContent = "Analyzer works after a completed game.";
+    return;
+  }
+
+  state.analysisInProgress = true;
+  analyzeButton.disabled = true;
+  clearAnalysis();
+
+  if (progressEl) {
+    progressEl.hidden = false;
+    progressBarEl.style.width = "0%";
+    if (progressLabelEl) progressLabelEl.textContent = "Analyzing turns…";
+  }
+
+  let remainingAnswers = [...state.answerWords];
+  let remainingCodes = state.answerCodes.slice();
+  const turns = [];
+  let skillSum = 0;
+  let skillCount = 0;
+  let luckSum = 0;
+
+  for (let i = 0; i < state.guesses.length; i += 1) {
+    const entry = state.guesses[i];
+    if (!remainingAnswers.length) break;
+
+    const weights = getWeights(remainingAnswers, state.priors);
+    const H0 = entropyFromDistribution(weights);
+    const weightMap = new Map();
+    for (let w = 0; w < remainingAnswers.length; w += 1) {
+      weightMap.set(remainingAnswers[w], weights[w]);
+    }
+
+    if (progressLabelEl) {
+      progressLabelEl.textContent = `Analyzing turn ${i + 1} of ${state.guesses.length}…`;
+    }
+
+    const result = await scoreCandidatesAsync({
+      candidates: state.allowedWords,
+      candidateCodes: state.allowedCodes,
+      answerCodes: remainingCodes,
+      weights,
+      H0,
+      weightMap,
+      targetGuess: entry.guess
+    });
+
+    const guessIndex = state.allowedIndex.get(entry.guess);
+    const guessCodes = Number.isInteger(guessIndex)
+      ? state.allowedCodes[guessIndex]
+      : wordToCodes(entry.guess);
+    const counts = buildPatternCounts(guessCodes, remainingCodes);
+    const total = remainingAnswers.length;
+    const patternCode = patternToCode(entry.pattern);
+    const actualRemaining = counts[patternCode] || 0;
+    const expectedRemaining = expectedRemainingFromCounts(counts, total);
+    const turnLuck = computeLuckScore(expectedRemaining, actualRemaining);
+    const turnSkill = computeSkillScore(result.bestScore, result.targetScore);
+
+    if (turnLuck !== null) luckSum += turnLuck;
+    if (turnSkill !== null) {
+      skillSum += turnSkill;
+      skillCount += 1;
+    }
+
+    turns.push({
+      guess: entry.guess,
+      bestGuess: result.bestGuess || "—",
+      luck: turnLuck,
+      skill: turnSkill
+    });
+
+    const nextAnswers = [];
+    const nextCodes = [];
+    for (let j = 0; j < remainingAnswers.length; j += 1) {
+      const answerCodes = remainingCodes[j];
+      const code = patternCodeFromCodes(guessCodes, answerCodes);
+      if (code === patternCode) {
+        nextAnswers.push(remainingAnswers[j]);
+        nextCodes.push(answerCodes);
+      }
+    }
+    remainingAnswers = nextAnswers;
+    remainingCodes = nextCodes;
+
+    if (isSolvedPattern(entry.pattern)) break;
+  }
+
+  const overallSkill = skillCount ? Math.round(skillSum / skillCount) : null;
+  const overallLuck = turns.length ? Math.round(luckSum / turns.length) : null;
+  renderAnalysis({
+    skill: overallSkill,
+    luck: overallLuck,
+    steps: turns.length,
+    turns
+  });
+
+  if (progressEl) {
+    progressEl.hidden = true;
+    progressBarEl.style.width = "0%";
+    if (progressLabelEl) progressLabelEl.textContent = "Computing expected score…";
+  }
+
+  state.analysisInProgress = false;
+  analyzeButton.disabled = false;
+}
+
 function renderBestGuesses(list) {
   bestGuessesEl.innerHTML = "";
   list.forEach((item) => {
@@ -716,10 +975,75 @@ function renderMiniBars(list) {
   });
 }
 
-function toggleMode() {
-  state.mode = state.mode === "solver" ? "play" : "solver";
-  toggleModeButton.textContent = state.mode === "solver" ? "Switch to Play" : "Switch to Solver";
+function renderAnalysis({ skill, luck, steps, turns }) {
+  if (analysisSkillEl) {
+    analysisSkillEl.textContent = skill === null ? "—" : `${skill}`;
+  }
+  if (analysisLuckEl) {
+    analysisLuckEl.textContent = luck === null ? "—" : `${luck}`;
+  }
+  if (analysisStepsEl) {
+    analysisStepsEl.textContent = steps ? `${steps}` : "—";
+  }
+  if (!analysisTurnsEl) return;
+  analysisTurnsEl.innerHTML = "";
+  turns.forEach((turn, index) => {
+    const li = document.createElement("li");
+    li.className = "analysis-item";
+
+    const guessWrap = document.createElement("div");
+    const guessWord = document.createElement("strong");
+    guessWord.textContent = `${index + 1}. ${turn.guess.toLowerCase()}`;
+    const guessMeta = document.createElement("span");
+    guessMeta.className = "analysis-sub";
+    guessMeta.textContent = turn.skill === null ? "Skill —" : `Skill ${turn.skill}`;
+    guessWrap.appendChild(guessWord);
+    guessWrap.appendChild(guessMeta);
+
+    const botWrap = document.createElement("div");
+    const botWord = document.createElement("strong");
+    botWord.textContent = `Bot: ${turn.bestGuess.toLowerCase()}`;
+    const botMeta = document.createElement("span");
+    botMeta.className = "analysis-sub";
+    botMeta.textContent = "Best pick";
+    botWrap.appendChild(botWord);
+    botWrap.appendChild(botMeta);
+
+    const luckEl = document.createElement("div");
+    luckEl.className = "analysis-luck";
+    luckEl.textContent = turn.luck === null ? "—" : `${turn.luck}`;
+
+    li.appendChild(guessWrap);
+    li.appendChild(botWrap);
+    li.appendChild(luckEl);
+    analysisTurnsEl.appendChild(li);
+  });
+}
+
+const MODE_ORDER = ["solver", "play", "analyzer"];
+
+function updateModeUI() {
+  const index = MODE_ORDER.indexOf(state.mode);
+  const nextMode = MODE_ORDER[(index + 1) % MODE_ORDER.length];
+  const nextLabel =
+    nextMode === "solver" ? "Solver" : nextMode === "play" ? "Play" : "Analyzer";
+  toggleModeButton.textContent = `Switch to ${nextLabel}`;
+  if (picksPanelEl) picksPanelEl.hidden = state.mode === "analyzer";
+  if (analysisPanelEl) analysisPanelEl.hidden = state.mode !== "analyzer";
+  if (analyzeButton) analyzeButton.hidden = state.mode !== "analyzer";
+  patternHintEl.textContent = getModeHint();
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  updateModeUI();
   resetGame();
+}
+
+function toggleMode() {
+  const index = MODE_ORDER.indexOf(state.mode);
+  const nextMode = MODE_ORDER[(index + 1) % MODE_ORDER.length];
+  setMode(nextMode);
 }
 
 async function loadLocalWordList(url) {
@@ -781,8 +1105,11 @@ async function init() {
   buildBoard();
   buildKeyboard();
   setSecret();
+  updateModeUI();
   updateStats();
-  computeSuggestions();
+  if (state.mode !== "analyzer") {
+    computeSuggestions();
+  }
   applyKeyboardStyles();
   setControlsEnabled(true);
 }
@@ -790,6 +1117,7 @@ async function init() {
 boardEl.addEventListener("click", handleTileClick);
 enterButton.addEventListener("click", handleEnter);
 applyButton.addEventListener("click", handleApply);
+analyzeButton.addEventListener("click", analyzeGame);
 resetButton.addEventListener("click", resetGame);
 toggleModeButton.addEventListener("click", toggleMode);
 randomAnswerButton.addEventListener("click", () => {
