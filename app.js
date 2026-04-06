@@ -1032,8 +1032,8 @@ function handleSetSecret() {
     patternHintEl.textContent = "Secret must be 5 letters.";
     return;
   }
-  if (!state.answerIndex.has(word)) {
-    patternHintEl.textContent = "Secret must be in the official answer list.";
+  if (!state.allowedIndex.has(word)) {
+    patternHintEl.textContent = "Secret must be a valid 5-letter word.";
     return;
   }
   state.customSecretSet = true;
