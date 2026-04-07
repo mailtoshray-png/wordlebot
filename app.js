@@ -6,6 +6,10 @@ const LOCAL_FREQ_MAP = "data/freq_map.json";
 const MIN_ALLOWED_SIZE = 12000;
 const MIN_ANSWER_SIZE = 2000;
 const PATTERN_COUNT = 3 ** WORD_LENGTH;
+const PRIOR_MODE = "freq"; // "uniform" or "freq"
+const ENTROPY_COEF = 1.5;
+const ALL_GREEN_CODE = 242;
+const DEEP_SEARCH_THRESHOLD = 0;
 const scratchCounts = new Uint8Array(26);
 const scratchResult = new Uint8Array(WORD_LENGTH);
 
@@ -202,7 +206,7 @@ function getActiveWeightsAndEntropy() {
 function entropyToExpectedScore(entropy) {
   const twoToMinus = 2 ** -entropy;
   const minScore = twoToMinus + 2 * (1 - twoToMinus);
-  return minScore + (1.5 * entropy) / 11.5;
+  return minScore + (ENTROPY_COEF * entropy) / 11.5;
 }
 
 function wordToCodes(word) {
@@ -679,6 +683,11 @@ function computeSuggestions() {
     return;
   }
 
+  if (state.remainingAnswers.length <= DEEP_SEARCH_THRESHOLD) {
+    computeDeepSuggestions();
+    return;
+  }
+
   if (state.remainingAnswers.length <= 5) {
     const candidates = state.remainingAnswers;
     const candidateCodes = state.remainingCodes;
@@ -768,6 +777,83 @@ function computeSuggestions() {
   }
 
   requestAnimationFrame(step);
+}
+
+function computeDeepSuggestions() {
+  const answers = state.remainingAnswers;
+  const answerCodes = state.remainingCodes;
+  const { weights, H0 } = getCurrentWeightsAndEntropy();
+  state.currentWeights = weights;
+  state.currentEntropy = H0;
+  updateStats();
+
+  const memo = new Map();
+  const bucketsWeight = new Float64Array(PATTERN_COUNT);
+  const bucketIndices = Array.from({ length: PATTERN_COUNT }, () => []);
+
+  function bestScoreDepth1(subsetIndices) {
+    if (subsetIndices.length <= 1) return subsetIndices.length ? 1 : 0;
+    const key = subsetIndices.join(",");
+    if (memo.has(key)) return memo.get(key);
+
+    const subsetWords = subsetIndices.map((idx) => answers[idx]);
+    const subsetWeights = getWeights(subsetWords, state.priors);
+    const H0sub = entropyFromDistribution(subsetWeights);
+    const weightMap = new Map();
+    for (let i = 0; i < subsetIndices.length; i += 1) {
+      weightMap.set(answers[subsetIndices[i]], subsetWeights[i]);
+    }
+
+    let bestScore = Infinity;
+    const buckets = new Float64Array(PATTERN_COUNT);
+    for (let i = 0; i < subsetIndices.length; i += 1) {
+      buckets.fill(0);
+      const guessCodes = answerCodes[subsetIndices[i]];
+      for (let j = 0; j < subsetIndices.length; j += 1) {
+        const code = patternCodeFromCodes(guessCodes, answerCodes[subsetIndices[j]]);
+        buckets[code] += subsetWeights[j];
+      }
+      const H1 = entropyFromDistribution(buckets);
+      const gain = H0sub - H1;
+      const prob = weightMap.get(answers[subsetIndices[i]]) || 0;
+      const expected = prob + (1 - prob) * (1 + entropyToExpectedScore(gain));
+      if (expected < bestScore) bestScore = expected;
+    }
+    memo.set(key, bestScore);
+    return bestScore;
+  }
+
+  const results = [];
+  for (let i = 0; i < answers.length; i += 1) {
+    bucketsWeight.fill(0);
+    for (let p = 0; p < PATTERN_COUNT; p += 1) bucketIndices[p].length = 0;
+
+    const guessCodes = answerCodes[i];
+    for (let j = 0; j < answers.length; j += 1) {
+      const code = patternCodeFromCodes(guessCodes, answerCodes[j]);
+      bucketsWeight[code] += weights[j];
+      if (code !== ALL_GREEN_CODE) bucketIndices[code].push(j);
+    }
+
+    const H1 = entropyFromDistribution(bucketsWeight);
+    const gain = H0 - H1;
+    let expectedNext = 0;
+    for (let code = 0; code < PATTERN_COUNT; code += 1) {
+      const p = bucketsWeight[code];
+      if (!p) continue;
+      if (code === ALL_GREEN_CODE) continue;
+      const subset = bucketIndices[code];
+      if (!subset.length) continue;
+      const nextScore = subset.length === 1 ? 1 : bestScoreDepth1(subset);
+      expectedNext += p * nextScore;
+    }
+    const totalScore = 1 + expectedNext;
+    results.push({ guess: answers[i], score: totalScore, gain });
+  }
+
+  results.sort((a, b) => a.score - b.score);
+  renderBestGuesses(results.slice(0, 10));
+  renderMiniBars(results.slice(0, 2));
 }
 
 function buildPatternStats(guessCodes, answerCodes, weights) {
@@ -1314,7 +1400,7 @@ async function init() {
     return;
   }
 
-  state.priors = buildFrequencyPriors(freqMap);
+  state.priors = PRIOR_MODE === "freq" ? buildFrequencyPriors(freqMap) : null;
   state.listsReady = true;
 
   buildBoard();
